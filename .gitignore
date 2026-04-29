@@ -1,0 +1,10 @@
+# build artifacts
+exploit
+payload
+payload.o
+*.o
+
+# editor / OS detritus
+*.swp
+*.swo
+.DS_Store

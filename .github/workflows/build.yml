@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later OR MIT
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.target.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { arch: x86_64,  prefix: '',                    apt: '' }
+          - { arch: aarch64, prefix: aarch64-linux-gnu,     apt: gcc-aarch64-linux-gnu }
+          - { arch: armv7,   prefix: arm-linux-gnueabihf,   apt: gcc-arm-linux-gnueabihf }
+          - { arch: riscv64, prefix: riscv64-linux-gnu,     apt: gcc-riscv64-linux-gnu }
+          - { arch: ppc64le, prefix: powerpc64le-linux-gnu, apt: gcc-powerpc64le-linux-gnu }
+          - { arch: s390x,   prefix: s390x-linux-gnu,       apt: gcc-s390x-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - name: install cross-toolchain
+        if: matrix.target.apt != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ${{ matrix.target.apt }}
+      - name: build
+        run: |
+          if [ -z "${{ matrix.target.prefix }}" ]; then
+            make
+          else
+            make CC=${{ matrix.target.prefix }}-gcc LD=${{ matrix.target.prefix }}-ld
+          fi
+      - name: verify ELF arch
+        run: |
+          file payload exploit
+          echo "payload size: $(stat -c%s payload) bytes"
