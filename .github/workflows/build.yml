@@ -45,19 +45,22 @@ jobs:
           fi
       - name: verify
         run: |
-          file payload exploit
+          file payload exploit exploit-passwd
           echo "payload: $(stat -c%s payload) bytes"
           echo "exploit: $(stat -c%s exploit) bytes"
-      - name: upload binary
+          echo "exploit-passwd: $(stat -c%s exploit-passwd) bytes"
+      - name: upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: copy-fail-c-${{ matrix.target.arch }}-glibc
-          path: exploit
+          path: |
+            exploit
+            exploit-passwd
           retention-days: 90
 
-  # zig cc + musl-static. Produces deploy-anywhere binaries (no glibc
-  # version dependency, no dynamic loader). zig ships musl libc for every
-  # target; we still need GNU binutils-<arch>-cross for the
+  # zig cc + musl-static. Produces deploy-anywhere binaries with a fully
+  # static link and no runtime libc version dependency. zig ships musl libc
+  # for every target; we still need GNU binutils-<arch>-cross for the
   # `ld -r -b binary` step that wraps the payload as a relocatable .o,
   # plus kernel UAPI headers for nolibc and linux/if_alg.h.
   build-musl:
@@ -98,7 +101,7 @@ jobs:
             UAPI_LINUX_DIR=${{ matrix.target.uapi_base }}/linux \
             UAPI_ASM_GENERIC_DIR=${{ matrix.target.uapi_base }}/asm-generic \
             UAPI_ASM_DIR=${{ matrix.target.uapi_asm }}
-      - name: strip binary
+      - name: strip binaries
         env:
           LD_PREFIX: ${{ matrix.target.ld_prefix }}
         run: |
@@ -106,24 +109,27 @@ jobs:
           if [ -n "$LD_PREFIX" ]; then
             STRIP="${LD_PREFIX}-strip"
           fi
-          BEFORE=$(stat -c%s exploit)
-          "$STRIP" --strip-all exploit
-          AFTER=$(stat -c%s exploit)
-          echo "stripped: $BEFORE -> $AFTER bytes"
+          for bin in exploit exploit-passwd; do
+            BEFORE=$(stat -c%s "$bin")
+            "$STRIP" --strip-all "$bin"
+            AFTER=$(stat -c%s "$bin")
+            echo "$bin stripped: $BEFORE -> $AFTER bytes"
+          done
       - name: verify
         run: |
-          file payload exploit
+          file payload exploit exploit-passwd
           echo "payload: $(stat -c%s payload) bytes"
           echo "exploit: $(stat -c%s exploit) bytes"
-      - name: upload binary
+          echo "exploit-passwd: $(stat -c%s exploit-passwd) bytes"
+      - name: upload binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: copy-fail-c-${{ matrix.target.arch }}-musl
-          path: exploit
+          path: |
+            exploit
+            exploit-passwd
           retention-days: 90
 
-  # Tagged releases attach all twelve binaries to a GitHub Release.
-  # Triggered only on `v*` tag pushes; ordinary main pushes skip this job.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-glibc, build-musl]
@@ -143,8 +149,10 @@ jobs:
           mkdir -p release
           for d in artifacts/copy-fail-c-*; do
             base=$(basename "$d")
+            passwd_name="${base/copy-fail-c-/copy-fail-c-passwd-}"
             cp "$d/exploit" "release/$base"
-            chmod +x "release/$base"
+            cp "$d/exploit-passwd" "release/$passwd_name"
+            chmod +x "release/$base" "release/$passwd_name"
           done
           ls -la release/
       - name: create release
@@ -162,8 +170,19 @@ jobs:
 
           ## Binaries
 
-          Each binary is statically linked. Download the one matching the target's
-          architecture and either libc variant.
+          Each binary is statically linked. Download the one matching the
+          target's architecture, libc, and exploit variant.
+
+          Exploit variants:
+
+          * \`copy-fail-c-<arch>-<libc>\`: binary-mutation variant. Mutates
+            a setuid binary's page cache, then execs it.
+          * \`copy-fail-c-passwd-<arch>-<libc>\`: /etc/passwd UID-flip variant.
+            Mutates four bytes of /etc/passwd's page cache, then execs `su`.
+            Works where the binary-mutation route is blocked but has a
+            narrower cashout surface; see README for details.
+
+          Build modes:
 
           * \`-glibc\` builds: GNU cross-toolchain, glibc-static. Larger (~800 KB)
             but functionally identical to source-built binaries on a glibc system.

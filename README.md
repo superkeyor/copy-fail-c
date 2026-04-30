@@ -17,7 +17,8 @@ Discovery and original disclosure: Theori / Xint.
 
 ```
 copy-fail-c/
-├── exploit.c           the dropper (AF_ALG + splice page-cache mutation)
+├── exploit.c           the dropper (binary-mutation variant)
+├── exploit-passwd.c    the dropper (/etc/passwd UID-flip variant)
 ├── payload.c           the body that gets dropped (setgid+setuid+execve sh)
 ├── Makefile            build orchestration
 ├── nolibc/             vendored from torvalds/linux tools/include/nolibc
@@ -29,7 +30,8 @@ After `make`:
 ```
 ├── payload             tiny static ELF, embedded into the dropper as bytes
 ├── payload.o           payload wrapped as a relocatable .o by `ld -r -b binary`
-└── exploit             final dropper binary
+├── exploit             dropper, binary-mutation variant
+└── exploit-passwd      dropper, /etc/passwd UID-flip variant
 ```
 
 `exploit.c` opens the target binary read-only, then for each 4-byte window of
@@ -46,6 +48,11 @@ setuid root, so the kernel grants root credentials and runs the payload.
 `payload.c` is plain portable C: `setgid(0); setuid(0); execve("/bin/sh",
 ...)`. nolibc supplies the `_start`, the syscall machinery, and the per-arch
 register-juggling.
+
+A second variant, `exploit-passwd.c`, mutates four bytes of /etc/passwd's page
+cache instead of a setuid binary's image. It needs no embedded payload and
+works on systems where the binary-mutation route is blocked, but its cashout
+surface is much narrower.
 
 
 ## Build
@@ -112,10 +119,7 @@ _binary_payload_size     absolute symbol whose value is the size in bytes
 ```
 
 `exploit.c` declares the first two as `extern const unsigned char[]` and
-computes the size as `_binary_payload_end - _binary_payload_start`. There is
-no `xxd -i`-generated header file, no embedded array literal, no source
-regeneration step. The payload bytes pass through the build as a real
-linker artifact.
+computes the size as `_binary_payload_end - _binary_payload_start`.
 
 ### `-Wl,-N` plus tight `max-page-size`
 
@@ -123,9 +127,58 @@ The payload is statically linked with `-Wl,-N -Wl,-z,max-page-size=0x10`,
 which collapses `.text`/`.rodata`/`.data` into a single LOAD segment with
 16-byte file-alignment instead of the kernel-page-aligned 4 KB-per-segment
 default. This produces an "RWX permissions" warning from `ld`, which is
-informational only - the payload's runtime memory protection doesn't matter
-to its single-purpose program. Without this flag, the same code links to ~13
-KB on x86_64 (mostly inter-segment zero padding); with it, ~1.7 KB.
+informational only - the payload's runtime memory protection doesn't matter to
+its single-purpose program. Without this flag, the same code links to ~13 KB
+on x86_64 (mostly inter-segment zero padding); with it, ~1.7 KB.
+
+
+## Variants and cashout viability
+
+This repository ships two exploit variants that share the AF_ALG/splice
+page-cache mutation primitive but cash out into root execution differently.
+Their reliability profiles are not equivalent, and the difference matters
+when reasoning about real-world threat models.
+
+### Binary-mutation variant (`exploit`)
+
+Mutates the page cache of a target setuid binary with the embedded payload
+bytes, then execs the binary. The kernel grants root credentials from the
+binary's untouched on-disk setuid bit, loads the corrupted in-memory image,
+and runs the payload.
+
+Works wherever the attacker can `open(target, O_RDONLY)` for any root-setuid
+binary on the system. More or less defeated by environments that gate setuid
+binaries behind restricted-read directories and by setuid-free system designs.
+
+### /etc/passwd UID-flip variant (`exploit-passwd`)
+
+Mutates four bytes of /etc/passwd's page cache to set the running user's UID
+field to "0000". /etc/passwd is world-readable on every standard Linux system,
+so the *mutation* is universal. Translating it into root execution depends on
+some root-side process resolving the user via getpwnam/getpwuid and acting on
+the resolved uid without cross-validation. Many such consumers exist; many of
+them defensively cross-check against the kernel's view of the calling uid or
+against on-disk file ownership, breaking the cashout.
+
+#### Cashout viability matrix
+
+| Cashout | Pre-root setup needed | Notes |
+|---|---|---|
+| WSL2 session spawn | No | WSL's per-session `setuid(getpwnam(default_user)->pw_uid)` does no validation. Works cleanly. |
+| util-linux `su` | No | Permissive caller-identity handling. |
+| shadow-utils `su` | Yes | `getpwuid(getuid())` caller-identity check fails because the mutation unmaps the real uid. |
+| sshd (default `StrictModes yes`) | Yes (disable StrictModes) | StrictModes requires the home dir to be owned by root or `pw->pw_uid`. Mutation makes pw_uid=0; on-disk owner stays at original uid; mismatch refuses auth. |
+| MTA local delivery (postfix, exim, etc.) | Variable | Depends on the MDA's home-perm validation. Test per MTA. |
+
+#### Pivoting after `su` fails
+
+`exploit-passwd` execs `su <user>` after mutating, as the simplest possible
+cashout. That works against util-linux `su` but fails against shadow-utils `su`
+with "Cannot determine your user name." The page cache mutation is still in
+place at that point, and pivoting to any other cashout (e.g. using a daemon
+resolving users via getpwnam without cross-checking) is possible at that point.
+Run `echo 3 > /proc/sys/vm/drop_caches` as root to clear the corrupted page
+cache when done testing.
 
 
 ## Affected kernels
@@ -152,26 +205,6 @@ backports started rolling out around 2026-04-29 alongside the public
 disclosure. To verify whether a target kernel is in-window, check whether
 `a664bf3d603d` (or its distro-specific backport) is present in the kernel's
 git log or the distro's changelog.
-
-
-## Verification
-
-Local cross-arch sanity check via qemu-user-static:
-
-```sh
-sudo apt install qemu-user-static gcc-aarch64-linux-gnu binfmt-support
-make clean
-make CC=aarch64-linux-gnu-gcc LD=aarch64-linux-gnu-ld
-file payload                         # ELF 64-bit LSB executable, ARM aarch64
-echo 'id; exit' | ./payload          # runs via binfmt_misc -> qemu-aarch64-static
-```
-
-This confirms the per-arch syscall asm in `nolibc/arch-arm64.h` dispatches
-correctly and that the build pipeline cross-compiles cleanly. It does not
-exercise the kernel-side AF_ALG/splice primitive on an aarch64 kernel,
-because qemu-user-static forwards syscalls to the host kernel. For full
-kernel-level verification on a foreign arch, use `qemu-system-aarch64` with
-a vulnerable cloud image, or a real aarch64 host.
 
 
 ## License and credits

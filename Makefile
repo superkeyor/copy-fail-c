@@ -60,7 +60,7 @@ PAYLOAD_CFLAGS ?= $(PAYLOAD_BASE_CFLAGS) $(PAYLOAD_PACK_LDFLAGS)
 
 .PHONY: all clean info musl-shim musl-static zig-musl-static FORCE
 
-all: exploit
+all: exploit exploit-passwd
 
 # musl-static: tiny (~55 KB exploit + ~1.5 KB payload), no glibc dependency.
 # Requires musl-tools and linux-libc-dev. musl-gcc isolates its include path
@@ -119,6 +119,11 @@ payload-abi.o: FORCE
 exploit: exploit.c payload.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -static -o $@ $^
 
+# /etc/passwd UID-flip variant. No payload needed; mutates four ASCII bytes
+# of /etc/passwd's page cache to flip the user's UID to "0000", then execs su.
+exploit-passwd: exploit-passwd.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -static -o $@ $<
+
 info: payload payload.o
 	@echo "=== payload size ==="
 	@stat -c '%n: %s bytes' payload
@@ -131,4 +136,4 @@ info: payload payload.o
 	@readelf -S payload | grep -E 'Name|\.text|\.rodata|\.data|\.bss' | head -10
 
 clean:
-	rm -rf exploit payload payload.o payload-abi.o .musl-shim
+	rm -rf exploit exploit-passwd payload payload.o payload-abi.o .musl-shim
