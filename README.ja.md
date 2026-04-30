@@ -1,6 +1,6 @@
 # Copy Fail (CVE-2026-31431) - C port
 
-*[English (en)](README.md) ∙ [日本語 (ja)](README.ja.md) ∙ [简体中文 (zh-cn)](README.zh-cn.md)*
+*[English (en)](README.md) ∙ [日本語 (ja)](README.ja.md) ∙ [简体中文 (zh-cn)](README.zh-cn.md) ∙ [한국어 (ko)](README.ko.md) ∙ [Русский (ru)](README.ru.md)*
 
 Copy Fail Linux LPE (CVE-2026-31431) のクロスプラットフォームC言語による再実装です。この脆弱性はTheori / Xintによって2026年4月29日に公開されました。脆弱性の詳細、タイムライン、Theoriによる発見プロセスについては、[copy.fail](https://copy.fail/) の公式レポートを参照してください。
 

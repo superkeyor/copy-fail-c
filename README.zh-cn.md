@@ -1,6 +1,6 @@
 # Copy Fail (CVE-2026-31431) - C port
 
-*[English (en)](README.md) ∙ [日本語 (ja)](README.ja.md) ∙ [简体中文 (zh-cn)](README.zh-cn.md)*
+*[English (en)](README.md) ∙ [日本語 (ja)](README.ja.md) ∙ [简体中文 (zh-cn)](README.zh-cn.md) ∙ [한국어 (ko)](README.ko.md) ∙ [Русский (ru)](README.ru.md)*
 
 Copy Fail Linux 本地提权 (CVE-2026-31431) 的跨平台 C 语言重写版。该漏洞由 Theori / Xint 于 2026 年 4 月 29 日披露。有关完整的漏洞描述、时间线以及 Theori 的发现过程，请参阅 [copy.fail](https://copy.fail/) 上的官方报告。
 
