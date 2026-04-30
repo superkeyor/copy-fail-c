@@ -10,8 +10,11 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: ${{ matrix.target.arch }}
+  # GNU toolchain + glibc-static. Compile-check across architectures using
+  # the same toolchain most distros ship. Artifacts are large (~800 KB) but
+  # confirm the source builds cleanly under GCC for each target.
+  build-glibc:
+    name: glibc / ${{ matrix.target.arch }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -37,14 +40,63 @@ jobs:
           else
             make CC=${{ matrix.target.prefix }}-gcc LD=${{ matrix.target.prefix }}-ld
           fi
-      - name: verify ELF arch
+      - name: verify
         run: |
           file payload exploit
-          echo "payload size: $(stat -c%s payload) bytes"
+          echo "payload: $(stat -c%s payload) bytes"
+          echo "exploit: $(stat -c%s exploit) bytes"
       - name: upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: copy-fail-c-${{ matrix.target.arch }}
+          name: copy-fail-c-${{ matrix.target.arch }}-glibc
+          path: |
+            payload
+            exploit
+          retention-days: 90
+
+  # zig cc + musl-static. Produces deploy-anywhere binaries (no glibc
+  # version dependency, no dynamic loader). zig ships musl libc for every
+  # target; we still need GNU binutils-<arch>-cross for the
+  # `ld -r -b binary` step that wraps the payload as a relocatable .o.
+  build-musl:
+    name: musl / ${{ matrix.target.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { arch: x86_64,  zig_target: x86_64-linux-musl,      ld_pkg: '',                              ld_prefix: '' }
+          - { arch: aarch64, zig_target: aarch64-linux-musl,     ld_pkg: binutils-aarch64-linux-gnu,      ld_prefix: aarch64-linux-gnu }
+          - { arch: armv7,   zig_target: arm-linux-musleabihf,   ld_pkg: binutils-arm-linux-gnueabihf,    ld_prefix: arm-linux-gnueabihf }
+          - { arch: riscv64, zig_target: riscv64-linux-musl,     ld_pkg: binutils-riscv64-linux-gnu,      ld_prefix: riscv64-linux-gnu }
+          - { arch: ppc64le, zig_target: powerpc64le-linux-musl, ld_pkg: binutils-powerpc64le-linux-gnu,  ld_prefix: powerpc64le-linux-gnu }
+          - { arch: s390x,   zig_target: s390x-linux-musl,       ld_pkg: binutils-s390x-linux-gnu,        ld_prefix: s390x-linux-gnu }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+      - name: install cross-binutils for ld -r -b binary
+        if: matrix.target.ld_pkg != ''
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ${{ matrix.target.ld_pkg }}
+      - name: build
+        run: |
+          LD_BIN=ld
+          if [ -n "${{ matrix.target.ld_prefix }}" ]; then
+            LD_BIN=${{ matrix.target.ld_prefix }}-ld
+          fi
+          make CC="zig cc -target ${{ matrix.target.zig_target }}" LD="$LD_BIN"
+      - name: verify
+        run: |
+          file payload exploit
+          echo "payload: $(stat -c%s payload) bytes"
+          echo "exploit: $(stat -c%s exploit) bytes"
+      - name: upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: copy-fail-c-${{ matrix.target.arch }}-musl
           path: |
             payload
             exploit
